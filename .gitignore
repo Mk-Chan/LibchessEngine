@@ -1,0 +1,4 @@
+*.o
+cmake-build-*/
+engine
+.idea/
