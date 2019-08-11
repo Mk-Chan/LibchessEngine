@@ -1,10 +1,10 @@
 #include <iostream>
-#include <sstream>
 
 #include "libchess/Position.h"
 #include "libchess/UCIService.h"
 
 #include "search.h"
+#include "tune.h"
 
 using namespace libchess;
 
@@ -40,6 +40,7 @@ int main() {
     uci_service.register_go_handler(go_handler);
     uci_service.register_stop_handler(stop_handler);
     uci_service.register_handler("d", display_handler);
+    uci_service.register_handler("tune", tune_handler);
 
     std::string line;
     while (true) {

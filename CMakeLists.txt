@@ -16,6 +16,6 @@ endif ()
 
 enable_testing()
 
-add_executable(engine main.cpp evaluation.cpp evaluation.h search.h search.cpp)
+add_executable(engine main.cpp evaluation.cpp evaluation.h search.h search.cpp tune.h)
 
 target_link_libraries(engine Threads::Threads)

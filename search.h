@@ -7,7 +7,7 @@
 namespace search {
 
 static const int MAX_PLY = 128;
-static const int INFINITY = 30001;
+static const int INFINITE = 30001;
 static const int MATE_SCORE = 30000;
 static const int MAX_MATE_SCORE = MATE_SCORE - MAX_PLY;
 

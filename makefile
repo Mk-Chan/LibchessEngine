@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -pipe $(EXTRACXXFLAGS)
+CXXFLAGS = -std=c++17 -Wall -pipe -fopenmp $(EXTRACXXFLAGS)
 LDFLAGS = -pthread -Wl,--no-as-needed $(CXXFLAGS) $(EXTRALDFLAGS)
 
 OBJS = main.o search.o evaluation.o

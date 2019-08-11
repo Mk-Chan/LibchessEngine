@@ -3,6 +3,8 @@
 #include "evaluation.h"
 #include "search.h"
 
+#include "tt.h"
+
 using namespace libchess;
 using namespace eval;
 
@@ -14,12 +16,43 @@ struct SearchStack {
         for (unsigned i = 0; i < search_stack.size(); ++i) {
             auto& ss = search_stack[i];
             ss.ply = int(i);
+            ss.killer_moves = {{std::nullopt, std::nullopt}};
         }
         return search_stack;
     }
 
+    std::array<std::optional<Move>, 2> killer_moves;
     int ply;
 };
+
+void sort_moves(const Position& pos, MoveList& move_list, SearchStack* ss,
+                std::optional<Move> tt_move = {}) {
+    move_list.sort([&](Move move) {
+        auto from_pt = *pos.piece_type_on(move.from_square());
+        auto to_pt = pos.piece_type_on(move.to_square());
+
+        int pawn_value = eval::MATERIAL[constants::PAWN][MIDGAME];
+        int equality_bound = pawn_value - 50;
+        if (tt_move && move == *tt_move) {
+            return 20000;
+        } else if (move.type() == Move::Type::ENPASSANT) {
+            return 10000 + pawn_value + 20;
+        } else if (to_pt) {
+            int capture_value = eval::MATERIAL[*to_pt][MIDGAME] - eval::MATERIAL[from_pt][MIDGAME];
+            if (capture_value >= equality_bound) {
+                return 10000 + capture_value;
+            } else {
+                return 5000 + capture_value;
+            }
+        } else if (ss->killer_moves[0] && move == *ss->killer_moves[0]) {
+            return 7001;
+        } else if (ss->killer_moves[1] && move == *ss->killer_moves[1]) {
+            return 7000;
+        } else {
+            return 0;
+        }
+    });
+}
 
 int qsearch_impl(Position& pos, int alpha, int beta, SearchStack* ss, SearchGlobals& sg) {
     if (sg.stop()) {
@@ -52,7 +85,10 @@ int qsearch_impl(Position& pos, int alpha, int beta, SearchStack* ss, SearchGlob
         pos.generate_promotions(move_list, pos.side_to_move());
     }
 
-    int best_score = -INFINITY;
+    sort_moves(pos, move_list, ss);
+
+    int move_num = 0;
+    int best_score = -INFINITE;
     for (auto move : move_list) {
         if (!pos.is_legal_generated_move(move)) {
             continue;
@@ -65,15 +101,16 @@ int qsearch_impl(Position& pos, int alpha, int beta, SearchStack* ss, SearchGlob
             return 0;
         }
 
+        ++move_num;
+
         if (score > best_score) {
             best_score = score;
-        }
-        if (best_score >= beta) {
-            alpha = beta;
-            break;
-        }
-        if (best_score > alpha) {
-            alpha = best_score;
+            if (best_score > alpha) {
+                alpha = best_score;
+                if (alpha >= beta) {
+                    break;
+                }
+            }
         }
     }
 
@@ -100,71 +137,121 @@ SearchResult search_impl(Position& pos, int alpha, int beta, int depth, SearchSt
         }
 
         alpha = std::max((-MATE_SCORE + ss->ply), alpha);
-        beta = std::max((MATE_SCORE - ss->ply), beta);
+        beta = std::min((MATE_SCORE - ss->ply), beta);
         if (alpha >= beta) {
             return {alpha, {}};
+        }
+    }
+
+    bool pv_node = alpha != beta - 1;
+
+    auto hash = pos.hash();
+    TTEntry tt_entry = tt.probe(hash);
+    Move tt_move{0};
+    if (tt_entry.get_key() == hash) {
+        tt_move = Move{tt_entry.get_move()};
+        int tt_score = tt_entry.get_score();
+        int tt_flag = tt_entry.get_flag();
+        if (!pv_node && tt_entry.get_depth() >= depth) {
+            if (tt_flag == TTConstants::FLAG_EXACT ||
+                (tt_flag == TTConstants::FLAG_LOWER && tt_score >= beta) ||
+                (tt_flag == TTConstants::FLAG_UPPER && tt_score <= alpha)) {
+                return {tt_score, {}};
+            }
+        }
+    }
+
+    if (!pv_node &&
+        (pos.occupancy_bb() &
+         ~(pos.piece_type_bb(constants::KING) | pos.piece_type_bb(constants::PAWN))) &&
+        !pos.in_check() && pos.previous_move() && beta > -MAX_MATE_SCORE) {
+        int static_eval = evaluate(pos);
+        if (depth < 3 && static_eval - 150 * depth >= beta) {
+            return {static_eval, {}};
         }
     }
 
     sg.increment_nodes();
 
     MoveList pv;
-    int best_score = -INFINITY;
+    int best_score = -INFINITE;
     auto move_list = pos.legal_move_list();
 
     if (move_list.empty()) {
         return {pos.in_check() ? -MATE_SCORE + ss->ply : 0, {}};
     }
 
+    sort_moves(pos, move_list, ss, tt_move);
+
+    int move_num = 0;
     for (auto move : move_list) {
+        ++move_num;
+
         pos.make_move(move);
-        SearchResult search_result = -search_impl(pos, -beta, -alpha, depth - 1, ss + 1, sg);
-        auto& [score, child_pv] = search_result;
+        SearchResult search_result =
+            move_num == 1 ? -search_impl(pos, -beta, -alpha, depth - 1, ss + 1, sg)
+                          : -search_impl(pos, -alpha - 1, -alpha, depth - 1, ss + 1, sg);
+        if (move_num > 1 && search_result.score > alpha) {
+            search_result = -search_impl(pos, -beta, -alpha, depth - 1, ss + 1, sg);
+        }
         pos.unmake_move();
 
         if (ss->ply && sg.stop()) {
             return {0, {}};
         }
 
-        if (score > best_score) {
-            best_score = score;
-        }
-        if (best_score >= beta) {
-            alpha = beta;
-            break;
-        }
-        if (best_score > alpha) {
-            alpha = score;
-            pv.clear();
-            pv.add(move);
-            if (child_pv) {
-                pv.add(*child_pv);
+        if (search_result.score > best_score) {
+            best_score = search_result.score;
+            if (best_score > alpha) {
+                alpha = best_score;
+
+                if (pv_node) {
+                    pv.clear();
+                    pv.add(move);
+                    if (search_result.pv) {
+                        pv.add(*search_result.pv);
+                    }
+                }
+
+                if (alpha >= beta) {
+                    if (!pos.piece_type_on(move.to_square()) &&
+                        move.type() != Move::Type::ENPASSANT && !move.promotion_piece_type() &&
+                        (!ss->killer_moves[0] || move != *ss->killer_moves[0])) {
+                        ss->killer_moves[1] = ss->killer_moves[0];
+                        ss->killer_moves[0] = move;
+                    }
+                    break;
+                }
             }
         }
     }
 
-    return {alpha, pv};
+    int tt_flag = best_score >= beta ? TTConstants::FLAG_LOWER
+                                     : best_score < alpha ? TTConstants::FLAG_UPPER : FLAG_EXACT;
+    tt.write(pv.begin()->value(), tt_flag, depth, best_score, hash);
+    return {best_score, pv};
 }
 
 int qsearch(Position& pos) {
     auto search_stack = SearchStack::new_search_stack();
     auto search_globals = SearchGlobals::new_search_globals();
-    return qsearch_impl(pos, -INFINITY, +INFINITY, search_stack.begin(), search_globals);
+    return qsearch_impl(pos, -INFINITE, +INFINITE, search_stack.begin(), search_globals);
 }
 
 SearchResult search(Position& pos, SearchGlobals& sg, int depth) {
     auto search_stack = SearchStack::new_search_stack();
-    int alpha = -INFINITY;
-    int beta = +INFINITY;
+    int alpha = -INFINITE;
+    int beta = +INFINITE;
     SearchResult search_result = search_impl(pos, alpha, beta, depth, search_stack.begin(), sg);
     return search_result;
 }
 
 SearchResult search(Position& pos, int depth) {
+    tt.clear();
     auto search_stack = SearchStack::new_search_stack();
     auto search_globals = SearchGlobals::new_search_globals();
-    int alpha = -INFINITY;
-    int beta = +INFINITY;
+    int alpha = -INFINITE;
+    int beta = +INFINITE;
     SearchResult search_result =
         search_impl(pos, alpha, beta, depth, search_stack.begin(), search_globals);
     return search_result;

@@ -9,15 +9,30 @@ namespace eval {
 
 enum Stage : int { MIDGAME, ENDGAME };
 
-static const int MAX_PHASE = 256;
+inline const int MAX_PHASE = 256;
 
-static const std::array<int, 6> PIECE_PHASE{{1, 10, 10, 20, 40, 0}};
+inline const std::array<int, 6> PIECE_PHASE{{1, 10, 10, 20, 40, 0}};
 
-static const std::array<std::array<int, 2>, 6> MATERIAL{
-    {{100, 120}, {300, 330}, {320, 350}, {500, 550}, {900, 1000}, {0, 0}}};
+inline std::array<std::array<int, 2>, 6> MATERIAL{{
+    {147, 116},
+    {378, 518},
+    {414, 547},
+    {741, 658},
+    {1335, 1474},
+    {0, 0},
+}};
+
+inline int ROOK_7TH_RANK_MG = 101;
+inline int ROOK_7TH_RANK_EG = -3;
+
+inline int DOUBLED_PAWNS_MG = -13;
+inline int DOUBLED_PAWNS_EG = -43;
+
+inline int ISOLATED_PAWNS_MG = -31;
+inline int ISOLATED_PAWNS_EG = -5;
 
 // clang-format off
-static std::array<std::array<std::array<int, 2>, 32>, 6> PSQT_TMP = {
+inline std::array<std::array<std::array<int, 2>, 32>, 6> PSQT_TMP = {
     {{{	// Pawn
           {  0,   0}, {  0,   0}, {  0,   0}, {  0,   0},
           {  0,   0}, {  0,   0}, {  0,   0}, {  0,   0},
@@ -83,7 +98,7 @@ static std::array<std::array<std::array<int, 2>, 32>, 6> PSQT_TMP = {
     }};
 // clang-format on
 
-static const std::array<std::array<std::array<std::array<int, 2>, 64>, 6>, 2> PSQT = []() {
+inline const std::array<std::array<std::array<std::array<int, 2>, 64>, 6>, 2> PSQT = []() {
     std::array<std::array<std::array<std::array<int, 2>, 64>, 6>, 2> psqt{};
     for (int c = 0; c < 2; ++c) {
         int k = 0;
